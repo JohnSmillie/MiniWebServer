@@ -32,10 +32,7 @@
 
 
 7. Notes:
-    - I have made adjustments to WebAdd.html to account for including the client information.
-      It is recommended that you use the version of WebAdd.html included with the submission.
-      In fact, my program will not work without the updated webpage. 
-
+   
 8. Thanks:
     - This program uses provided helper code and references from:
         - MiniWebserver Assignment: MyTelnetClient.java, MyListener.java, WebResponse.java
@@ -86,143 +83,134 @@ import java.nio.file.*;
 import java.util.*;
 
 public class MiniWebserver {
-static int i = 0;
-static int clientID = 100;
+// track the total replies sent from the server
+static int replies = 0;
+// clientCookie is assigned and incremented with each new client
+static int cookieAssignment = 100;
+// simple DB to hold the client history - number of requests here
+static HashMap<Integer, WebAddClient> clientDB = new HashMap<>();
 
   public static void main(String a[]) throws IOException {
-    int q_len = 6; /* Number of requests for OS to queue */
+    
+    int q_len = 6; 
     int port = 2540;
-    Socket sock;
+    Socket connectionSocket;
     
     ServerSocket servsock = new ServerSocket(port, q_len);
 
     System.out.println("John Smillie's MiniWebserver running at 2540.");
     System.out.println("Point Firefox browser to http://localhost:2540/WebAdd.html\n");
     while (true) {
-      // the server will be listening on localhost:2540
-      // this could be modified to run with command line inputs indicating the IP address and
-      // port number for any machine anywhere in the world
-
-      // wait for the next client connection:
-      sock = servsock.accept();
-      new WebserverWorker (sock, clientID).start();
+      // listener socket
+      connectionSocket = servsock.accept();
+      new WebserverWorker (connectionSocket).start();
     }
   }
 }
-
-// A WebAddClient is instantiated when the WebAdd.html page is first visited
-// The createMyWebAdd method serves up a version of WebAdd.html with an incrementally increasing
-// clientID and a number of requests starting at 1 (this request) as part of the form in readonly mode
-// In this way, the clientID and current request number are included with the query string upon 
-// subsequent requests. 
-// An initializeWebClient method could've been used instead of creating an entire class - it would 
-// look almost identical to createMyWebAdd. 
-// Because I don't have control of the browser, there was no way to assign a cookie so that my server
-// could recognize who was submitting input. I had to create the cookie and embed it into the document.
-// By using an input field with readonly attributes, I was able to submit the assigned clientID along with 
-// the other information into the query string.
-// Because of this solution, I new client is created with every visit to WebAdd.html, even coming from the
-//same machine.
 
 class WebAddClient{
-  int clientID = MiniWebserver.clientID++;
-  int requestCount = 1;
-  String myWebAdd; 
+  int clientID; 
+  int visits;
+  String name;
   
-  public WebAddClient(File file){
-    this.myWebAdd = createMyWebAdd(file);
-  }
-  public String createMyWebAdd(File file){
-    String myWebAdd = "";
-    try{
-    BufferedReader reader = new BufferedReader(new FileReader((file)));
-    String nextLine = reader.readLine();
-    while(nextLine != null){
-      if(nextLine.contains("placeHolderID")){
-        System.out.println("true");
-        nextLine = "<input form=\"form1\" name=\"ID\" id=\"ID\" value=\"" + this.clientID  +"\" style=\"border:none;\" readonly>";
-      }
-      else if (nextLine.contains("placeHolderRequest")){
-        System.out.println("true");
-        nextLine = "<input form=\"form1\" name=\"Request\" id=\"Request\" value=\"" + this.requestCount + "\" style=\"border:none;\" readonly>";
-      }
-      myWebAdd += nextLine;
-      nextLine = reader.readLine();
-    }
-    reader.close();
-    }catch(IOException e){e.printStackTrace();}
-    //System.out.println(myWebAdd);
-    return myWebAdd;
+  public WebAddClient(){
+    this.clientID = MiniWebserver.cookieAssignment++;
+    this.visits = 0;
+    MiniWebserver.clientDB.put(clientID, this);
   }
 }
 
 
-class WebserverWorker extends Thread {    // Class definition
-  Socket sock;                   // Class member, socket, local to ListnWorker.
-  WebserverWorker (Socket s, int clientID) {sock = s;} // Constructor, assign arg s to local sock
-  
+class WebserverWorker extends Thread {    
+  Socket sock; 
+           
+  WebserverWorker (Socket s) {
+    // Connection socket
+    sock = s;
+  } 
   public void run(){
     PrintStream out = null;   // Input from the socket
     BufferedReader in = null; // Output to the socket
+    int cookie = 0; 
+    boolean isNewClient = true;       
 
-    // currently this system is set up to serve WebAdd.html
-    // however, with a little string editing to the request line, this could
-    // serve any file in our directory
     File file = new File("WebAdd.html");
     try {
       out = new PrintStream(sock.getOutputStream()); // instantiate the output stream
       in = new BufferedReader(new InputStreamReader(sock.getInputStream())); // instantiate the input stream
       // read in the request line from the user containing the pertinent info to serve the webpage
-      String firstLine = in.readLine();
-      // in house tracking of total server requests
-      System.out.println("Sending the HTML Reponse now: " + Integer.toString(MiniWebserver.i++) + "\n" );
+      String requestLine = in.readLine();
+      // read the remainder of the header
+      String nextline = in.readLine();
+      // check if browser is sending a cookie
+      // if no cookie, then we have a new client
+      while (nextline.length() > 0){
+        if(nextline.contains("Cookie:")){
+          cookie = Integer.parseInt(nextline.substring(8, nextline.length()).trim());
+          isNewClient = false;
+        }
+        nextline = in.readLine();
+      }
       // respond accordingly to the request 
       // bad request
-      if(!firstLine.startsWith("GET") || 
-      !(firstLine.endsWith("HTTP/1.1") || firstLine.endsWith("HTTP/1.0"))){
+      if(!requestLine.startsWith("GET") || 
+      !(requestLine.endsWith("HTTP/1.1") || requestLine.endsWith("HTTP/1.0"))){
         out.println("HTTP/1.0 400 Bad Request");
         out.println("Connection: close");
         out.println("Content-Length: 400"); 
         out.println("Content-Type: text/html \r\n\r\n");
         out.println("<h1>400 Bad Request</h1>");
       }
-      // attack request - trying to access the file system
-      else if(firstLine.contains("..") || 
-        firstLine.substring(0, firstLine.length()-9).equals("~")){
-        out.println("HTTP/1.0 403 Forbidden Request");
-        out.println("Connection: close");
-        out.println("Content-Length: 400"); 
-        out.println("Content-Type: text/html \r\n\r\n");
-        out.print("<h1>403 Forbidden Request</h1>");
+      else{ 
+        String request = requestLine.substring(5, requestLine.length()-9).trim();
+        // attack request - trying to access the file system
+        if(request.contains("..") || request.endsWith("~")){
+          out.println("HTTP/1.0 403 Forbidden Request");
+          out.println("Connection: close");
+          out.println("Content-Length: 400"); 
+          out.println("Content-Type: text/html \r\n\r\n");
+          out.print("<h1>403 Forbidden Request</h1>");
       }
-      // webpage request - only able to server WebAdd.html in this iteration
-      else if(firstLine.contains("WebAdd.html")){
-        // Instantiate a WebAddClient whose sole purpose is to create a unique version
-        // of WebAdd.html
-        // It is unique due to the embedded clientID and request count created by the class
-        // This ensures that subsequent requests from the server will recognize the client
-        //WebAddClient client = new WebAddClient(file);
-        // myWebAdd will be the unique version (as String) of the WebAdd.html page for the 
-        // visiting client
-        byte[] fileBytes = Files.readAllBytes(file.toPath());                  //client.myWebAdd.getBytes();
-        sendHTML(fileBytes, out);
+      // unrecongnized file requested
+        else if(!request.contains("WebAdd.html")){
+          out.println("HTTP/1.0 404 Not Found");
+          out.println("Connection: close");
+          out.println("Content-Length: 400"); 
+          out.println("Content-Type: text/html \r\n\r\n");
+          out.println("<h1>404 Not Found</h1><p>Your request is not valid</p>");
+        }
+      // WebAdd.html visited by new client. 
+      // instantiate a new client and server the webpage
+      else if(request.equals("WebAdd.html")){
+        byte[] fileBytes = Files.readAllBytes(file.toPath());
+        if (isNewClient){
+          WebAddClient client = new WebAddClient();
+          cookie = client.clientID;                
+          sendHTMLSetCookie(fileBytes, out, cookie, isNewClient);
+        }
+        else if (MiniWebserver.clientDB.get(cookie).name != null){
+          // include hello message
+          includeHelloAndPrintWebAdd(file, out, cookie);
+        }
+        else{                 
+          sendHTML(fileBytes, out);
+        }
+        //System.out.println(requestLine);
+        MiniWebserver.clientDB.get(cookie).visits++;
+        System.out.println("Client: " + cookie + " Visits: " + MiniWebserver.clientDB.get(cookie).visits);
       }
-      // input submission request - produce the updated webpage
-      else if(firstLine.contains("WebAdd.fake-cgi")){
-        //System.out.println(firstLine);
-        updateAndPrintWebAdd(file, firstLine, out);
-      }
-      // other type request
+      // html form input supplied with the GET request
       else{
-        out.println("HTTP/1.0 404 Not Found");
-        out.println("Connection: close");
-        out.println("Content-Length: 400"); 
-        out.println("Content-Type: text/html \r\n\r\n");
-        out.println("<h1>404 Not Found</h1><p>Your request is not valid</p>");
+          String name = getNameFromInput(request);
+          MiniWebserver.clientDB.get(cookie).name = name;
+          MiniWebserver.clientDB.get(cookie).visits++;
+          System.out.println("Client: " + cookie + " Visits: " + MiniWebserver.clientDB.get(cookie).visits);
+          updateAndPrintWebAdd(file, requestLine, out, cookie);
+        
       }
-  
-	 
-	
+    }
+      // in house tracking of total server requests
+      System.out.println("Total server replies: " + Integer.toString(++MiniWebserver.replies) + "\n" );
       sock.close(); // close this connection, but not the server;
     } catch (IOException x) {
       System.out.println("Error: Connection reset. Listening again...");
@@ -235,14 +223,11 @@ class WebserverWorker extends Thread {    // Class definition
   // read in the file line by line looking for the placeholder values and exchange them with the 
   // extracted A/V pairs 
   // use the lines of the file to create a print string to be rendered as a byte array
-  public void updateAndPrintWebAdd(File file, String line, PrintStream out){
+  public void updateAndPrintWebAdd(File file, String line, PrintStream out, int cookie){
     List<String> parsed = parseRequest(line);
     String name = "value=\"" + parsed.get(0) + "\"";
     String num1 = "value=\"" + parsed.get(1) + "\"";
     String num2 = "value=\"" + parsed.get(2) + "\"";
-    //String clientID = "value=\"" + parsed.get(3) + "\"";
-    //int nextRequest = Integer.parseInt(parsed.get(4))+1;
-    //String requestCount = "value=\"" + Integer.toString(nextRequest) + "\"";
     int result = Integer.parseInt(parsed.get(1)) + Integer.parseInt(parsed.get(2));
     
     try{
@@ -251,23 +236,19 @@ class WebserverWorker extends Thread {    // Class definition
         String printString = "";
         
         while(nextLine != null){
-          if(nextLine.contains("value=\"YourName\"")){
+          if(nextLine.contains("Enter your name")){
+          nextLine = "<p>Thanks " + MiniWebserver.clientDB.get(cookie).name + "!</p><p> Enter two numbers and my program will return the sum:</p>";
+          }
+          else if(nextLine.contains("NAME=\"person\"")){
             nextLine = "<p><INPUT TYPE=\"text\" NAME=\"person\" size=20 " + name + "</p>";
           }
-          else if(nextLine.contains("value=\"4\"")){
+          else if(nextLine.contains("NAME=\"num1\"")){
             nextLine = "<p><INPUT TYPE=\"text\" NAME=\"num1\" size=5 " + num1 + "></p>"; 
           }
-          else if(nextLine.contains("value=\"5\"")){
-            nextLine = "<p><INPUT TYPE=\"text\" NAME=\"num2\" size=5 " + num2 + "> </p><br>";
-            nextLine += "Result: " + result + "</p><br>";
+          else if(nextLine.contains("NAME=\"num2\"")){
+            nextLine = "<p><INPUT TYPE=\"text\" NAME=\"num2\" size=5 " + num2 + "> </p>";
+            nextLine += "<p>Result: " + result + "</p>";
           }
-          /*else if(nextLine.contains("value=\"placeHolderID\"")){
-            nextLine = "<input form=\"form1\" name=\"ID\" id=\"ID\"" +  clientID +  " style=\"border: none;\" readonly></p>";
-          }
-          else if(nextLine.contains("value=\"placeHolderRequest\"")){
-            nextLine = "<input form=\"form1\" name=\"Request\" id=\"Request\"" +  requestCount + " style=\"border: none;\" readonly></p>";
-          }*/
-          
           printString += nextLine;
           nextLine = buffer.readLine();
         }
@@ -282,147 +263,81 @@ class WebserverWorker extends Thread {    // Class definition
     
   }
 
+  public void includeHelloAndPrintWebAdd(File file, PrintStream out, int cookie){
+    try{
+      BufferedReader reader = new BufferedReader(new FileReader(file));
+      String nextLine = reader.readLine();
+      String printString = "";
+      while(nextLine != null){
+        if(nextLine.contains("Enter your name")){
+          nextLine = "<p>Welcome back " + MiniWebserver.clientDB.get(cookie).name + "!</p><p> Enter two numbers and my program will return the sum:</p>";
+        }
+        else if(nextLine.contains("NAME=\"person\"")){
+            nextLine = "<p><INPUT TYPE=\"text\" NAME=\"person\" size=20 value=\"" + MiniWebserver.clientDB.get(cookie).name+ "\"</p>";
+          }
+        printString += nextLine;
+        nextLine = reader.readLine();
+      }
+      byte[] stringBytes = printString.getBytes();
+      sendHTML(stringBytes, out);
+      reader.close();
+    }catch(IOException e){e.printStackTrace();}
+    
+  }
+
   // attach the HTTP header and send the byte array over the output stream
   // this is going back to the browser 
-  public void sendHTML(byte[] fileAsBytes, PrintStream out){
+  public void sendHTMLSetCookie(byte[] fileAsBytes, PrintStream out, int cookie, boolean isNewClient){
       out.println("HTTP/1.1 200 OK");
       out.println("Connection: close");
+      out.println("Server: MyMiniWebserver/1.0");
+      if(isNewClient){
+        out.println("Set-cookie: " + cookie);
+      }
       //MIME types:
       int len = fileAsBytes.length;
       out.println("Content-Length: " + Integer.toString(len)); 
       out.println("Content-Type: text/html \r\n\r\n");
+      
       try{
         out.write(fileAsBytes);
       }catch(IOException e){}
   }
 
-  
+  public void sendHTML(byte[] stringAsBytes, PrintStream out){
+      out.println("HTTP/1.1 200 OK");
+      out.println("Connection: close");
+      out.println("Server: MyMiniWebserver/1.0");
+      
+      //MIME types:
+      int len = stringAsBytes.length;
+      out.println("Content-Length: " + Integer.toString(len)); 
+      out.println("Content-Type: text/html \r\n\r\n");
+      
+      try{
+        out.write(stringAsBytes);
+      }catch(IOException e){}
+  }
+
+  public String getNameFromInput(String line){
+    int startPerson = line.indexOf("person=");
+    int endPerson = line.indexOf("num1=");
+    return line.substring(startPerson+7, endPerson-1);
+  }
   // parse the query string
   public List<String> parseRequest(String line){
     List<String> list = new ArrayList<>();
     int startPerson = line.indexOf("person=");
     int startNum1 = line.indexOf("num1=");
     int startNum2 = line.indexOf("num2=");
-    int startID = line.indexOf("ID=");
-    //int startCount = line.indexOf("Request=");
-    int endCount = line.indexOf("HTTP/1.1")-1;
-    list.add(line.substring(startPerson+7, startNum1 - 1));
+    int end = line.indexOf("HTTP/1.1")-1;
+    list.add(line.substring(startPerson+7, startNum1-1));
     list.add(line.substring(startNum1+5, startNum2-1));
-    list.add(line.substring(startNum2+5, endCount)); //startID-1
-    //list.add(line.substring(startID+3, startCount-1));
-    //list.add(line.substring(startCount+8, endCount));
+    list.add(line.substring(startNum2+5, end));
+    
     
     return list;
   }
 }
 
-
-/*
-
-Discussion Post 1:
-
-Hello Team!
-
-This is my first web server build, and I'm really enjoying the process. 
-The relevance of a web server in today's world is no secret to those of us in this class. 
-I've faced many hurdles along the way, which has lead me to a gratifying learning experience. 
-
-The premier question I had was: how does my server receive a request from the browser and 
-return an HTML file (or any type of file) to the browser to be displayed? There were several 
-steps to uncovering the answer[s] to this question. 
-
-First, by running MyListener, I was able to see what the browser would be sending to the server 
-when I visited the site (which at this point was simply localhost:2540/abc). I saw that the 
-browser was sending over an HTTP GET request that looked like:
-
-GET /abc HTTP/1.1
-
-Host: localhost:2540
-
-...
-
-Next, by running MyTelnetClient, I was prompted to send my own GET request (similar to the above request) 
-to Dr. Elliott's server at DePaul. What I received back from the server looked something like this:
-
-HTTP/1.0 400 Bad Request
-
-Connection: close
-
-Content-Length: 400
-
-Content-Type: text/html
-
-This alerted me to the exchange of HTTP headers that takes place between the browser and the server. 
-None of this was a huge surprise, but the entire exchange was happening in the console. I still found 
-myself with the same question: how do I get the .html file on my machine (the server) back to the browser? 
-I could see that the "what" was laid out for me - I just needed to parse out the request string. But, 
-I couldn't figure out the "how".
-
-The WebResponse program illuminated a few key features - primarily the InputStream and OutputStream 
-that would be key to the data transfer. Then, I did a bit more research, and found a few helpful links. 
-The 150 line web server provided in the MyWebserver  Assignment was immensely helpful on many fronts. 
-The fact is, any data sent between the server and the browser would be no more than a stream of bytes. 
-This is why the HTTP header, and hence, MIME-types are fundamental to this exchange. They will alert 
-the browser to the type of data it will subsequently be receiving from the server. I realized that I 
-would need to render my file as an array of bytes to be sent through the data link layer. I found this 
-website provided several different ways to accomplish this.
-
-By combining the parsed request string from the browser, the HTTP headers with the MIME-type, the 
-InputStream/OutputStream, and the file as an array of bytes, I now had everything I needed to answer 
-my initial question. And, it worked!
-
-My second question required a lot more time and lots of trial and error: how do I take the submitted 
-form input from WebAdd.html and return a new version of the original .html file now with different 
-information?  And how do I accomplish this with every form submission?
-
-More on this later...
-
-P.S. if anyone is working on the MiniWebserver assignment and wants to chat about it please reach out. 
- 
-
-
-Discussion Post 2:
-
-Continuing where my previous post left off, it was my goal that the server be able to:
-
-    - Host the WebAdd.html page and receive input from the user as an HTML form. 
-    - Return a modified version of the webpage with the user-entered name and numbers in the input fields, 
-      as well as the result of the addition of the two entered numbers.
-    - Allow for continuing user-submissions of the form.
-    - Assign a Client ID to each visitor and track that client's number of requests. 
-
-Part 1 was trivial since I had already discovered how to display the webpage when visited, and the form was 
-already written into the provided WebAdd.html. Thus, I was all setup to receive input from the user. 
-The query string sent with the user submission contained the data I needed to update to page, so I wrote a 
-method to parse the query string. 
-
-Parts 2 and 3 essentially required the same solution. Hence, once I had solved for part 2, part 3 was inherently
-working. At first, my approach to this solution was askew. I made several attempts where I returned a modified 
-version of WebAdd.html such that all new visitors to the page would be viewing the modified version, and not 
-the original version. I was too focused on modifying the HTML document itself, and not the contents of the 
-document. The solution I found for this was to program my server to read in the contents of the HTML document, 
-and while doing so modify the contents to include the parsed data, and then output the modified contents of the 
-webpage (and not the file itself). Thus, my WebAdd.html page remained the same, but at each user submission my 
-server was returning updated content to the browser. (Note: it should be recognized that there are an abundance 
-of technologies to accomplish this task)
-
-Finally, surmounting part 4 took a bit of thought. Essentially, I needed a way to assign a cookie to the visitor
-so that my server would recognize who was submitting the form. The assignment suggests looking to the ColorServer 
-and JokeServer assignments as a reference to assign unique IDs to the client. I was perplexed by this approach, 
-because in those examples we were programming the client and had full control over their actions. However, I was 
-now working with the browser as the client, and I have no programming control over the browser. But, continuing 
-on with the suggestion, I resolved to instantiate a WebAddClient when the webpage was first visited by a user. 
-This client would have an ID and a number of requests. [See aside below] My thinking then revolved around including 
-user data along with the query string so my server would recognize who was submitting. I modified the web form to 
-include a readonly attribute field containing the client ID and number of requests, and created a unique rendering 
-of webpage for each new client. In this manner, every submission of the form would provide me with the client ID 
-and request number as a key/value pair. I now had everything I needed to track the client and update their number 
-of requests. The remainder of the solution was similar to parts 2 and 3.
-
-(Aside: as I was writing this submission it occurred to me that there must be a way for me to assign a cookie to a 
-visitor. The solution is in HTTP headers. Live and learn.)
-
-Thanks for reading. 
-
-*/
 
